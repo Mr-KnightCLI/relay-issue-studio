@@ -63,17 +63,21 @@ if(el("exportReport"))el("exportReport").onclick=()=>{
  const a=document.createElement("a");a.href=url;a.download="relay-review.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);
 };
 el("search").oninput=draw;
-el("demo").onclick=()=>{generation++;el("repo").value="";el("repo").removeAttribute("aria-invalid");el("status").dataset.error="false";try{localStorage.removeItem(savedKey)}catch{};if(el("reviewFilter"))el("reviewFilter").value="all";issues=samples;repository="Sample workspace";selected=104;el("search").value="";el("status").textContent="Showing sample issues.";draw()};
+let activeImport;
+const retry=node("button","Retry import");retry.type="button";retry.hidden=true;el("status").after(retry);retry.onclick=()=>el("importForm").requestSubmit();
+el("demo").onclick=()=>{generation++;activeImport?.abort();retry.hidden=true;el("repo").value="";el("repo").removeAttribute("aria-invalid");el("status").dataset.error="false";try{localStorage.removeItem(savedKey)}catch{};if(el("reviewFilter"))el("reviewFilter").value="all";issues=samples;repository="Sample workspace";selected=104;el("search").value="";el("status").textContent="Showing sample issues.";draw()};
 el("importForm").onsubmit=async event=>{
- event.preventDefault();el("status").dataset.error="false";el("repo").removeAttribute("aria-invalid");const seq=++generation;
+ event.preventDefault();activeImport?.abort();retry.hidden=true;el("status").dataset.error="false";el("repo").removeAttribute("aria-invalid");const seq=++generation;
  const repo=el("repo").value.trim().replace(/^https:\/\/github\.com\//i,"").replace(/\/$/,"");
  if(!/^[\w.-]+\/[\w.-]+$/.test(repo)||repo.split("/").some(s=>/^\.+$/.test(s))){el("repo").setAttribute("aria-invalid","true");el("repo").focus();el("status").dataset.error="true";el("status").textContent="Enter a GitHub repository as owner/name.";return}
  el("status").textContent="Fetching recent issues…";
- try{const response=await fetch("https://api.github.com/repos/"+repo+"/issues?state=open&per_page=100");
+ const controller=new AbortController();activeImport=controller;let timedOut=false;
+ const timer=setTimeout(()=>{timedOut=true;controller.abort()},15000);
+ try{const response=await fetch("https://api.github.com/repos/"+repo+"/issues?state=open&per_page=100",{signal:controller.signal});
  if(!response.ok)throw Error(response.status===404?"Public repository not found.":response.status===403||response.status===429?"GitHub request limit reached. Try again later.":"GitHub could not load this repository.");
  const data=await response.json();if(seq!==generation)return;
  issues=data.filter(i=>!i.pull_request).map(i=>({number:i.number,title:i.title,body:(i.body||"").slice(0,6000)}));repository=repo;try{localStorage.setItem(savedKey,JSON.stringify({repo,issues}))}catch{};if(el("reviewFilter"))el("reviewFilter").value="all";selected=issues[0]?.number;el("search").value="";draw();el("status").textContent=issues.length+" open issues from the latest "+data.length+" entries.";
- }catch(error){if(seq===generation){el("status").dataset.error="true";el("status").textContent=error instanceof TypeError?"Could not reach GitHub. Check your connection and retry.":error.message}}
+ }catch(error){if(seq===generation){el("status").dataset.error="true";retry.hidden=false;el("status").textContent=timedOut?"GitHub took longer than 15 seconds. Try the import again.":error instanceof TypeError?"Could not reach GitHub. Check your connection and retry.":error.message}}finally{clearTimeout(timer);if(activeImport===controller)activeImport=undefined}
 };
 draw();
 
@@ -92,4 +96,5 @@ if ("IntersectionObserver" in window && !matchMedia("(prefers-reduced-motion: re
   }
  }
 }
+
 
