@@ -1,0 +1,50 @@
+"use strict";
+const el = id => document.getElementById(id);
+const samples = [
+ [104,"Export dialog freezes on large reports","Opening export for reports over 500 rows freezes the dialog. Expected a CSV download."],
+ [101,"Large reports freeze the export dialog","The export dialog freezes with large reports. Steps: open a report with 900 rows, select Export."],
+ [98,"Keyboard focus skips the search field","Pressing Tab from navigation skips the search input. Expected the input to receive focus."],
+ [94,"Add a compact view for issue lists","Feature request: allow maintainers to fit more issues on a laptop display."],
+ [89,"Document the webhook setup","The installation guide omits webhook configuration."]
+].map(([number,title,body])=>({number,title,body}));
+let issues=samples, repository="Sample workspace", selected=104, generation=0;
+const node=(tag,text,cls)=>{const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n};
+const words=s=>new Set(s.toLowerCase().match(/[a-z0-9]+/g)?.filter(w=>w.length>2&&!["the","for","with","and","from"].includes(w)).map(w=>w.replace(/s$/,""))||[]);
+function matches(issue){
+ const a=words(issue.title);
+ return issues.filter(i=>i!==issue).map(i=>{const b=words(i.title);return {i,score:[...a].filter(w=>b.has(w)).length/new Set([...a,...b]).size}}).filter(m=>m.score>=0.22).sort((x,y)=>y.score-x.score).slice(0,3);
+}
+function reviewKey(i){return "relay:review:"+repository.toLowerCase()+":"+i.number}
+const memory=new Map();
+function reviewed(i){const key=reviewKey(i);if(memory.has(key))return memory.get(key);try{return localStorage.getItem(key)==="1"}catch{return false}}
+function draw(){
+ const list=el("list"), panel=el("detail");list.replaceChildren();panel.replaceChildren();
+ const visible=issues.filter(i=>(i.title+" #"+i.number).toLowerCase().includes(el("search").value.toLowerCase().trim()));
+ el("queueTitle").textContent=repository;
+ if(!visible.length){list.append(node("p","No matching issues."));panel.append(node("p","Select an issue to inspect its report."));return}
+ const issue=visible.find(i=>i.number===selected)||visible[0];selected=issue.number;
+ for(const i of visible){const b=node("button","","issue"+(i===issue?" active":""));b.type="button";b.setAttribute("aria-pressed",String(i===issue));b.append(node("small","#"+i.number),node("strong",i.title),node("span",reviewed(i)?"Reviewed":"Open","tag"));b.onclick=()=>{selected=i.number;draw();list.querySelector('[aria-pressed=true]')?.focus({preventScroll:true})};list.append(b)}
+ panel.append(node("small","ISSUE / "+issue.number),node("h2",issue.title),node("p",(issue.body||"No description supplied.").slice(0,1500)));
+ const label=/documen|guide|readme/i.test(issue.title)?"documentation":/feature|add |support /i.test(issue.title)?"enhancement":/freeze|fail|error|crash|skip|broken/i.test(issue.title)?"bug":"needs triage";
+ panel.append(node("h3","Suggested label"),node("span",label,"tag"),node("small","Based on title keywords."),node("h3","Possible duplicates"));
+ const similar=matches(issue);if(!similar.length)panel.append(node("p","No close title matches in this queue."));
+ for(const {i} of similar){const b=node("button","#"+i.number+" · "+i.title);b.onclick=()=>{el("search").value="";selected=i.number;draw()};panel.append(b)}
+ const missing=[[/steps|reproduc|1[.)]/i,"steps to reproduce"],[/expected|should/i,"expected behavior"],[/version|environment|browser|windows|linux|macos/i,"environment"]].filter(([pattern])=>!pattern.test(issue.body||"")).map(([,name])=>name);
+ panel.append(node("h3","Report checklist"),node("p",missing.length?"Consider asking for "+missing.join(", ")+".":"All checklist keywords found."));
+ const toggle=node("button",reviewed(issue)?"Reopen review":"Mark reviewed");toggle.onclick=()=>{const value=!reviewed(issue),key=reviewKey(issue);memory.set(key,value);try{localStorage.setItem(key,value?"1":"0")}catch{}draw()};panel.append(toggle);
+ if(issues!==samples){const link=node("a","Open on GitHub ↗");link.href="https://github.com/"+repository+"/issues/"+issue.number;link.target="_blank";link.rel="noopener";panel.append(link)}
+}
+el("search").oninput=draw;
+el("demo").onclick=()=>{generation++;issues=samples;repository="Sample workspace";selected=104;el("search").value="";el("status").textContent="Showing sample issues.";draw()};
+el("importForm").onsubmit=async event=>{
+ event.preventDefault();const seq=++generation;
+ const repo=el("repo").value.trim().replace(/^https:\/\/github\.com\//i,"").replace(/\/$/,"");
+ if(!/^[\w.-]+\/[\w.-]+$/.test(repo)||repo.split("/").some(s=>/^\.+$/.test(s))){el("status").textContent="Enter a GitHub repository as owner/name.";return}
+ el("status").textContent="Fetching recent issues…";
+ try{const response=await fetch("https://api.github.com/repos/"+repo+"/issues?state=open&per_page=100");
+ if(!response.ok)throw Error(response.status===404?"Public repository not found.":response.status===403||response.status===429?"GitHub request limit reached. Try again later.":"GitHub could not load this repository.");
+ const data=await response.json();if(seq!==generation)return;
+ issues=data.filter(i=>!i.pull_request);repository=repo;selected=issues[0]?.number;el("search").value="";draw();el("status").textContent=issues.length+" open issues from the latest "+data.length+" entries.";
+ }catch(error){if(seq===generation)el("status").textContent=error.message||"Could not connect to GitHub."}
+};
+draw();
