@@ -33,7 +33,7 @@ function draw(){
   const chart=el("activityChart");chart.replaceChildren();
   for(const [label,value] of [["Pending",issues.length-done],["Reviewed",done]]){
    const row=node("div","","chart-row"),bar=document.createElement("progress");bar.max=issues.length||1;bar.value=value;bar.setAttribute("aria-label",label);
-   row.append(node("span",label+" · "+value),bar);chart.append(row);
+   row.append(node("span",label),bar,node("output",String(value)));chart.append(row);
   }
  }
  if(el("reviewMetrics")){
@@ -63,18 +63,33 @@ if(el("exportReport"))el("exportReport").onclick=()=>{
  const a=document.createElement("a");a.href=url;a.download="relay-review.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);
 };
 el("search").oninput=draw;
-el("demo").onclick=()=>{generation++;try{localStorage.removeItem(savedKey)}catch{};if(el("reviewFilter"))el("reviewFilter").value="all";issues=samples;repository="Sample workspace";selected=104;el("search").value="";el("status").textContent="Showing sample issues.";draw()};
+el("demo").onclick=()=>{generation++;el("repo").value="";el("repo").removeAttribute("aria-invalid");el("status").dataset.error="false";try{localStorage.removeItem(savedKey)}catch{};if(el("reviewFilter"))el("reviewFilter").value="all";issues=samples;repository="Sample workspace";selected=104;el("search").value="";el("status").textContent="Showing sample issues.";draw()};
 el("importForm").onsubmit=async event=>{
- event.preventDefault();const seq=++generation;
+ event.preventDefault();el("status").dataset.error="false";el("repo").removeAttribute("aria-invalid");const seq=++generation;
  const repo=el("repo").value.trim().replace(/^https:\/\/github\.com\//i,"").replace(/\/$/,"");
- if(!/^[\w.-]+\/[\w.-]+$/.test(repo)||repo.split("/").some(s=>/^\.+$/.test(s))){el("status").textContent="Enter a GitHub repository as owner/name.";return}
+ if(!/^[\w.-]+\/[\w.-]+$/.test(repo)||repo.split("/").some(s=>/^\.+$/.test(s))){el("repo").setAttribute("aria-invalid","true");el("repo").focus();el("status").dataset.error="true";el("status").textContent="Enter a GitHub repository as owner/name.";return}
  el("status").textContent="Fetching recent issues…";
  try{const response=await fetch("https://api.github.com/repos/"+repo+"/issues?state=open&per_page=100");
  if(!response.ok)throw Error(response.status===404?"Public repository not found.":response.status===403||response.status===429?"GitHub request limit reached. Try again later.":"GitHub could not load this repository.");
  const data=await response.json();if(seq!==generation)return;
  issues=data.filter(i=>!i.pull_request).map(i=>({number:i.number,title:i.title,body:(i.body||"").slice(0,6000)}));repository=repo;try{localStorage.setItem(savedKey,JSON.stringify({repo,issues}))}catch{};if(el("reviewFilter"))el("reviewFilter").value="all";selected=issues[0]?.number;el("search").value="";draw();el("status").textContent=issues.length+" open issues from the latest "+data.length+" entries.";
- }catch(error){if(seq===generation)el("status").textContent=error.message||"Could not connect to GitHub."}
+ }catch(error){if(seq===generation){el("status").dataset.error="true";el("status").textContent=error instanceof TypeError?"Could not reach GitHub. Check your connection and retry.":error.message}}
 };
 draw();
 
+
+if ("IntersectionObserver" in window && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+ const observer = new IntersectionObserver(entries => {
+  for (const entry of entries) if (entry.isIntersecting) {
+   entry.target.classList.add("in-view");
+   observer.unobserve(entry.target);
+  }
+ }, {threshold:0});
+ for (const card of document.querySelectorAll(".stats article,.tools .card,.workspace .card")) {
+  if (card.getBoundingClientRect().top >= innerHeight) {
+   card.classList.add("reveal-ready");
+   observer.observe(card);
+  }
+ }
+}
 
